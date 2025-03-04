@@ -1,0 +1,206 @@
+CREATE TABLE Books (
+    BookID INT PRIMARY KEY,
+    Title VARCHAR(255) NOT NULL,
+    AuthorID INT,
+    Genre VARCHAR(50),
+    Price DECIMAL(10, 2),
+    PublicationYear INT,
+    FOREIGN KEY (AuthorID) REFERENCES Authors(AuthorID)
+);
+
+
+CREATE TABLE Authors (
+    AuthorID INT PRIMARY KEY,
+    AuthorName VARCHAR(100) NOT NULL,
+    Nationality VARCHAR(50),
+    BirthYear INT
+);
+
+CREATE TABLE Customers (
+    CustomerID INT  PRIMARY KEY,
+    CustomerName VARCHAR(100) NOT NULL,
+    Email VARCHAR(100) UNIQUE NOT NULL,
+    Phone VARCHAR(20),
+    Address TEXT
+);
+
+CREATE TABLE Orders (
+    OrderID INT PRIMARY KEY,
+    CustomerID INT,
+    OrderDate DATE,
+    TotalAmount DECIMAL(10, 2),
+    FOREIGN KEY (CustomerID) REFERENCES Customers(CustomerID)
+);
+
+CREATE TABLE OrderItems (
+    OrderItemID INT PRIMARY KEY,
+    OrderID INT,
+    BookID INT,
+    Quantity INT,
+    FOREIGN KEY (OrderID) REFERENCES Orders(OrderID),
+    FOREIGN KEY (BookID) REFERENCES Books(BookID)
+);
+
+INSERT INTO Books (BookID, AuthorID, Genre, Price, PublicationYear) VALUES
+(1,'Harry Potter  Stone', 101, 'Fantasy', 50, 1997),
+(2,'To Kill a Mockingbird', 102, 'Fiction', 35, 1960),
+(3,'The Great Gatsby', 103, 'Classic', 40, 1925),
+(4,'Pride and Prejudice', 104, 'Romance', 30, 1813);
+
+INSERT INTO Authors (AuthorID, Nationality, BirthYear) VALUES
+(101,'J.K. Rowling', 'British', 1965),
+(102,'Harper lee', 'American', 1926),
+(103, 'F. Scott Fitzgerald', 'American', 1896),
+(104, 'Jane Austen', 'British', 1775);
+
+INSERT INTO Customers (CustomerID, Email, Phone, Address) VALUES
+(201, 'John Doe', 'johnn.doe@example.com', '123-456-7890', '123 Main Street'),
+(202, 'Jane Smith', 'jane.smith@example.com', '987-654-3210', '456 Oak Avenue'),
+(203, 'David Lee', 'david.lee@example.com', '555-123-4567', '789 Maple Road');
+
+INSERT INTO Orders (OrderID, CustomerID, OrderDate, TotalAmount) VALUES
+(301, 201, '2023-07-01', 90),
+(302, 202, '2023-07-02', 35),
+(303, 203, '2023-07-03', 70);
+
+INSERT INTO OrderItems (OrderItemID, BookID, Quantity) VALUES
+(401, 301, 1, 2),
+(402, 301, 2, 1),
+(403, 302, 3, 1),
+(404, 303, 3, 2);
+
+USE [Bookworm Haven];
+GO
+
+-- Create a SQL Server login for the user (if it doesn't already exist)
+CREATE LOGIN BookwormUser
+    WITH PASSWORD = 'Pass123',
+    CHECK_EXPIRATION = ON,
+    CHECK_POLICY = ON;
+GO
+
+-- Create a database user for the login
+CREATE USER BookwormUser
+    FOR LOGIN BookwormUser;
+GO
+
+-- Grant SELECT, INSERT, UPDATE, and DELETE permissions on Books table
+GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.Books TO BookwormUser;
+GO
+
+-- Grant SELECT, INSERT, UPDATE, and DELETE permissions on Authors table
+GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.Authors TO BookwormUser;
+GO
+
+CREATE FUNCTION dbo.CustomerAccessPredicate (@CustomerID INT)
+RETURNS TABLE
+WITH SCHEMABINDING
+AS
+RETURN SELECT 1 AS Result
+WHERE @CustomerID = CAST(SUSER_SNAME() AS INT);
+GO
+
+--This is a container for a set of security predicates.
+CREATE SECURITY POLICY CustomerFilterPolicy
+ADD FILTER PREDICATE dbo.CustomerAccessPredicate(CustomerID)
+ON dbo.Customers
+WITH (STATE = ON);
+GO
+
+-- Create a server audit
+CREATE SERVER AUDIT OrdersAudit
+TO FILE ( FILEPATH = 'C:\AuditLogs\OrdersAudit.sqlaudit', MAXSIZE = 5 GB, MAX_FILES = 10, RESERVE_DISK_SPACE = OFF );
+GO
+
+-- Enable the server audit
+ALTER SERVER AUDIT OrdersAudit
+WITH (STATE = ON);
+GO
+
+-- Create a server audit specification
+CREATE SERVER AUDIT SPECIFICATION OrdersAuditSpec
+FOR SERVER AUDIT OrdersAudit
+ADD (DATABASE_OBJECT_PERMISSION_CHANGE_GROUP),
+ADD (SCHEMA_OBJECT_CHANGE_GROUP),
+ADD (DATABASE_ROLE_MEMBER_CHANGE_GROUP),
+ADD (DATABASE_OBJECT_PERMISSION_CHANGE_GROUP);
+GO
+
+-- Enable the server audit specification
+ALTER SERVER AUDIT SPECIFICATION OrdersAuditSpec
+WITH (STATE = ON);
+GO
+
+-- Create a database audit specification
+USE [Bookworm Haven];
+GO
+
+CREATE DATABASE AUDIT SPECIFICATION OrdersDBAuditSpec
+FOR SERVER AUDIT OrdersAudit
+ADD (SELECT, INSERT, UPDATE, DELETE ON dbo.Orders BY PUBLIC),
+ADD (SELECT, INSERT, UPDATE, DELETE ON dbo.OrderItems BY PUBLIC);
+GO
+
+-- Enable the database audit specification
+ALTER DATABASE AUDIT SPECIFICATION OrdersDBAuditSpec
+WITH (STATE = ON);
+GO
+
+--Full Backup
+BACKUP DATABASE BookwormHaven
+TO DISK = 'D:\Backups\BookwormHaven_Full.bak'
+WITH FORMAT,
+     MEDIANAME = 'BookwormHavenBackupMedia',
+     NAME = 'Full Backup of Bookworm Haven';
+GO
+
+--Differential Backup
+BACKUP DATABASE BookwormHaven
+TO DISK = 'D:\Backups\BookwormHaven_Diff.bak'
+WITH DIFFERENTIAL,
+     NAME = 'Differential Backup of Bookworm Haven';
+GO
+
+--Transaction Backup
+BACKUP LOG BookwormHaven
+TO DISK = 'D:\Backups\BookwormHaven_Log.trn'
+WITH NAME = 'Transaction Log Backup of Bookworm Haven';
+GO
+
+-- Restore full backup
+RESTORE DATABASE BookwormHaven_Restore
+FROM DISK = 'D:\Backups\BookwormHaven_Full.bak'
+WITH FILE = 1,
+     NORECOVERY,
+     MOVE 'BookwormHaven_Data' TO 'D:\Restores\BookwormHaven_Restore.mdf',
+     MOVE 'BookwormHaven_Log' TO 'D:\Restores\BookwormHaven_Restore_log.ldf';
+GO
+
+-- Restore differential backup
+RESTORE DATABASE BookwormHaven_Restore
+FROM DISK = 'D:\Backups\BookwormHaven_Diff.bak'
+WITH FILE = 1,
+     NORECOVERY;
+GO
+
+-- Restore transaction log backup
+RESTORE LOG BookwormHaven_Restore
+FROM DISK = 'D:\Backups\BookwormHaven_Log.trn'
+WITH FILE = 1,
+     STOPAT = '2024-08-15 15:30:00',
+     RECOVERY;
+GO
+
+-- Copy Orders table to production database
+USE BookwormHaven;
+GO
+
+-- Drop existing Orders table if needed
+IF OBJECT_ID('dbo.Orders', 'U') IS NOT NULL
+    DROP TABLE dbo.Orders;
+GO
+
+-- Copy Orders table
+SELECT * INTO dbo.Orders
+FROM BookwormHaven_Restore.dbo.Orders;
+GO
